@@ -1,0 +1,152 @@
+from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi.responses import RedirectResponse
+from google_auth_oauthlib.flow import Flow
+from supabase import create_client
+import os
+
+router = APIRouter()
+
+supabase = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_KEY"),
+)
+
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+
+def _get_user_id(request: Request) -> str:
+    """Extract user_id from request header (set by frontend auth middleware)."""
+    user_id = request.headers.get("x-user-id")
+    if not user_id:
+        raise HTTPException(401, "Missing x-user-id header")
+    return user_id
+
+
+def _build_flow() -> Flow:
+    """Build Google OAuth flow configured for gmail.readonly only."""
+    return Flow.from_client_config(
+        {
+            "web": {
+                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+                "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+                "redirect_uris": [os.getenv("GMAIL_REDIRECT_URI")],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=SCOPES,
+        redirect_uri=os.getenv("GMAIL_REDIRECT_URI"),
+    )
+
+
+# ── 1. Start Gmail OAuth ─────────────────────────────────────
+@router.get("/connect")
+async def gmail_connect(user_id: str = Depends(_get_user_id)):
+    """Return a Google OAuth URL. Frontend redirects the user to it."""
+    flow = _build_flow()
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",          # always show consent → guarantees refresh_token
+        state=user_id,             # round-trip the user id through OAuth state
+    )
+    return {"auth_url": auth_url}
+
+
+# ── 2. OAuth Callback ────────────────────────────────────────
+@router.get("/callback")
+async def gmail_callback(code: str, state: str, error: str = None):
+    """Google redirects here after consent. Exchange code for tokens."""
+
+    if error:
+        # User denied access or something went wrong
+        frontend = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        return RedirectResponse(f"{frontend}/dashboard?gmail=denied")
+
+    user_id = state
+    flow = _build_flow()
+    flow.fetch_token(code=code)
+    credentials = flow.credentials
+
+    # Hard-check: scope MUST be readonly
+    granted = set(credentials.scopes or [])
+    if "https://www.googleapis.com/auth/gmail.readonly" not in granted:
+        raise HTTPException(400, "Invalid scope — only gmail.readonly is accepted")
+
+    encryption_secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
+
+    # Encrypt both tokens before persisting
+    enc_access = (
+        supabase.rpc(
+            "encrypt_token",
+            {"token": credentials.token, "secret": encryption_secret},
+        )
+        .execute()
+        .data
+    )
+    enc_refresh = (
+        supabase.rpc(
+            "encrypt_token",
+            {"token": credentials.refresh_token, "secret": encryption_secret},
+        )
+        .execute()
+        .data
+    )
+
+    # Fetch the Gmail address from the id_token (or userinfo)
+    gmail_email = None
+    if credentials.id_token and isinstance(credentials.id_token, dict):
+        gmail_email = credentials.id_token.get("email")
+
+    # Upsert — allows user to reconnect Gmail
+    supabase.table("gmail_tokens").upsert(
+        {
+            "user_id": user_id,
+            "access_token": enc_access,
+            "refresh_token": enc_refresh,
+            "token_expiry": (
+                credentials.expiry.isoformat() if credentials.expiry else None
+            ),
+            "gmail_email": gmail_email,
+            "is_active": True,
+        }
+    ).execute()
+
+    frontend = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    return RedirectResponse(
+        f"{frontend}/dashboard?gmail=connected&scan=starting"
+    )
+
+
+# ── 3. Check Gmail connection status ─────────────────────────
+@router.get("/status")
+async def gmail_status(user_id: str = Depends(_get_user_id)):
+    """Check if user has an active Gmail connection."""
+    result = (
+        supabase.table("gmail_tokens")
+        .select("gmail_email, is_active, connected_at, last_synced_at")
+        .eq("user_id", user_id)
+        .eq("is_active", True)
+        .execute()
+    )
+
+    if not result.data:
+        return {"connected": False}
+
+    row = result.data[0]
+    return {
+        "connected": True,
+        "gmail_email": row["gmail_email"],
+        "connected_at": row["connected_at"],
+        "last_synced_at": row["last_synced_at"],
+    }
+
+
+# ── 4. Disconnect Gmail ──────────────────────────────────────
+@router.delete("/disconnect")
+async def gmail_disconnect(user_id: str = Depends(_get_user_id)):
+    """Revoke Gmail access. Keeps existing parsed data intact."""
+    supabase.table("gmail_tokens").update({"is_active": False}).eq(
+        "user_id", user_id
+    ).execute()
+    return {"message": "Gmail disconnected. Your existing financial data is not deleted."}
