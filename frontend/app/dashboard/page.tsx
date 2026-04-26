@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { gmail, analysis } from "@/lib/api";
@@ -11,7 +11,7 @@ import ScanProgress from "@/components/gmail/ScanProgress";
 type GmailStatus = { connected: boolean; gmail_email?: string; last_synced_at?: string };
 type AnalysisData = { has_analysis: boolean; financial_score?: number; top_action?: string; id?: string; spending_breakdown?: Record<string, number>; insights?: any[]; created_at?: string };
 
-export default function DashboardPage() {
+function DashboardContent() {
   const supabase = createClient();
   const router = useRouter();
   const params = useSearchParams();
@@ -216,5 +216,13 @@ export default function DashboardPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-paper flex items-center justify-center"><div className="w-8 h-8 border-2 border-green border-t-transparent rounded-full animate-spin" /></div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }
