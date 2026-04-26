@@ -4,13 +4,11 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from supabase import create_client
 
 from services.ai_analyser import analyse_statements
+from services.supabase_client import get_supabase
 
 router = APIRouter()
-
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
 
 def _get_user_id(request: Request) -> str:
@@ -38,7 +36,7 @@ async def trigger_analysis(
     # Verify uploads belong to this user
     for uid in body.upload_ids:
         check = (
-            supabase.table("pdf_uploads")
+            get_supabase().table("pdf_uploads")
             .select("id")
             .eq("id", uid)
             .eq("user_id", user_id)
@@ -60,7 +58,7 @@ async def trigger_analysis(
 async def latest_analysis(user_id: str = Depends(_get_user_id)):
     """Get the most recent analysis for this user."""
     result = (
-        supabase.table("analysis_results")
+        get_supabase().table("analysis_results")
         .select("*")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
@@ -79,7 +77,7 @@ async def latest_analysis(user_id: str = Depends(_get_user_id)):
 async def get_analysis(analysis_id: str, user_id: str = Depends(_get_user_id)):
     """Fetch a specific analysis by ID."""
     result = (
-        supabase.table("analysis_results")
+        get_supabase().table("analysis_results")
         .select("*")
         .eq("id", analysis_id)
         .eq("user_id", user_id)
@@ -97,7 +95,7 @@ async def get_analysis(analysis_id: str, user_id: str = Depends(_get_user_id)):
 async def analysis_history(user_id: str = Depends(_get_user_id)):
     """Get all past analyses for this user."""
     results = (
-        supabase.table("analysis_results")
+        get_supabase().table("analysis_results")
         .select("id, financial_score, top_action, created_at")
         .eq("user_id", user_id)
         .order("created_at", desc=True)

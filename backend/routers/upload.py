@@ -4,13 +4,11 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
-from supabase import create_client
 
 from services.pdf_parser import parse_pdf_file, parse_pdf_bytes, detect_statement_type_from_pdf
+from services.supabase_client import get_supabase
 
 router = APIRouter()
-
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
 
 def _get_user_id(request: Request) -> str:
@@ -36,17 +34,19 @@ async def upload_pdf(
     if len(contents) > 10 * 1024 * 1024:  # 10MB limit
         raise HTTPException(400, "File too large — max 10MB")
 
+    sb = get_supabase()
+
     # Upload to Supabase Storage
     file_id = str(uuid.uuid4())
     storage_path = f"{user_id}/{file_id}_{file.filename}"
 
-    supabase.storage.from_("statements").upload(
+    sb.storage.from_("statements").upload(
         storage_path, contents, {"content-type": "application/pdf"}
     )
 
     # Create upload record
     upload = (
-        supabase.table("pdf_uploads")
+        sb.table("pdf_uploads")
         .insert(
             {
                 "user_id": user_id,
@@ -71,7 +71,7 @@ async def upload_pdf(
         stmt_type = detect_statement_type_from_pdf(parse_result)
 
         # Update upload record with parsed info
-        supabase.table("pdf_uploads").update(
+        sb.table("pdf_uploads").update(
             {
                 "bank_name": parse_result["bank_name"],
                 "statement_type": stmt_type,
@@ -85,10 +85,10 @@ async def upload_pdf(
             for tx in parse_result["transactions"]
         ]
         if txs:
-            supabase.table("transactions").insert(txs).execute()
+            sb.table("transactions").insert(txs).execute()
 
         # Delete PDF from storage immediately after parsing
-        supabase.storage.from_("statements").remove([storage_path])
+        sb.storage.from_("statements").remove([storage_path])
 
         return {
             "upload_id": upload_id,
@@ -99,12 +99,12 @@ async def upload_pdf(
         }
 
     except Exception as e:
-        supabase.table("pdf_uploads").update(
+        sb.table("pdf_uploads").update(
             {"status": "failed", "error_message": str(e)}
         ).eq("id", upload_id).execute()
 
         # Clean up storage on failure too
-        supabase.storage.from_("statements").remove([storage_path])
+        sb.storage.from_("statements").remove([storage_path])
 
         raise HTTPException(500, f"Failed to parse PDF: {str(e)}")
 
@@ -113,7 +113,7 @@ async def upload_pdf(
 async def upload_history(user_id: str = Depends(_get_user_id)):
     """Get all uploads for a user."""
     uploads = (
-        supabase.table("pdf_uploads")
+        get_supabase().table("pdf_uploads")
         .select("*")
         .eq("user_id", user_id)
         .order("created_at", desc=True)

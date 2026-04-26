@@ -4,12 +4,18 @@ import json
 import os
 
 import google.generativeai as genai
-from supabase import create_client
 
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
+from services.supabase_client import get_supabase
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+_gemini_model = None
+
+
+def _get_gemini():
+    global _gemini_model
+    if _gemini_model is None:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    return _gemini_model
 
 ANALYSIS_SYSTEM_PROMPT = """You are Rupiq's AI financial analyst for Indian consumers. You receive parsed transaction data from bank statements, credit card statements, demat/brokerage statements, and CIBIL credit reports.
 
@@ -74,6 +80,7 @@ Return ONLY valid JSON. No markdown, no explanation outside the JSON."""
 
 async def analyse_statements(user_id: str, upload_ids: list[str]) -> dict:
     """Run Gemini analysis on one or more parsed statements."""
+    sb = get_supabase()
 
     # Fetch all transactions for these uploads
     all_transactions = []
@@ -82,7 +89,7 @@ async def analyse_statements(user_id: str, upload_ids: list[str]) -> dict:
     for upload_id in upload_ids:
         # Get upload metadata
         upload = (
-            supabase.table("pdf_uploads")
+            sb.table("pdf_uploads")
             .select("*")
             .eq("id", upload_id)
             .single()
@@ -93,7 +100,7 @@ async def analyse_statements(user_id: str, upload_ids: list[str]) -> dict:
 
         # Get transactions
         txs = (
-            supabase.table("transactions")
+            sb.table("transactions")
             .select("*")
             .eq("upload_id", upload_id)
             .execute()
@@ -130,7 +137,7 @@ Transaction data:
 Provide your complete analysis in the JSON format specified."""
 
     # Call Gemini
-    response = model.generate_content(
+    response = _get_gemini().generate_content(
         [ANALYSIS_SYSTEM_PROMPT, user_prompt],
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
@@ -153,7 +160,7 @@ Provide your complete analysis in the JSON format specified."""
 
     # Save analysis result to DB
     result = (
-        supabase.table("analysis_results")
+        sb.table("analysis_results")
         .insert(
             {
                 "user_id": user_id,
@@ -174,7 +181,7 @@ Provide your complete analysis in the JSON format specified."""
 
     # Update upload statuses to "analysed"
     for upload_id in upload_ids:
-        supabase.table("pdf_uploads").update({"status": "analysed"}).eq(
+        sb.table("pdf_uploads").update({"status": "analysed"}).eq(
             "id", upload_id
         ).execute()
 

@@ -1,15 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
-from supabase import create_client
+from services.supabase_client import get_supabase
 import os
 
 router = APIRouter()
-
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_SERVICE_KEY"),
-)
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
@@ -76,8 +71,9 @@ async def gmail_callback(code: str, state: str, error: str = None):
     encryption_secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
 
     # Encrypt both tokens before persisting
+    sb = get_supabase()
     enc_access = (
-        supabase.rpc(
+        sb.rpc(
             "encrypt_token",
             {"token": credentials.token, "secret": encryption_secret},
         )
@@ -85,7 +81,7 @@ async def gmail_callback(code: str, state: str, error: str = None):
         .data
     )
     enc_refresh = (
-        supabase.rpc(
+        sb.rpc(
             "encrypt_token",
             {"token": credentials.refresh_token, "secret": encryption_secret},
         )
@@ -99,7 +95,7 @@ async def gmail_callback(code: str, state: str, error: str = None):
         gmail_email = credentials.id_token.get("email")
 
     # Upsert — allows user to reconnect Gmail
-    supabase.table("gmail_tokens").upsert(
+    sb.table("gmail_tokens").upsert(
         {
             "user_id": user_id,
             "access_token": enc_access,
@@ -123,7 +119,7 @@ async def gmail_callback(code: str, state: str, error: str = None):
 async def gmail_status(user_id: str = Depends(_get_user_id)):
     """Check if user has an active Gmail connection."""
     result = (
-        supabase.table("gmail_tokens")
+        get_supabase().table("gmail_tokens")
         .select("gmail_email, is_active, connected_at, last_synced_at")
         .eq("user_id", user_id)
         .eq("is_active", True)
@@ -146,7 +142,7 @@ async def gmail_status(user_id: str = Depends(_get_user_id)):
 @router.delete("/disconnect")
 async def gmail_disconnect(user_id: str = Depends(_get_user_id)):
     """Revoke Gmail access. Keeps existing parsed data intact."""
-    supabase.table("gmail_tokens").update({"is_active": False}).eq(
+    get_supabase().table("gmail_tokens").update({"is_active": False}).eq(
         "user_id", user_id
     ).execute()
     return {"message": "Gmail disconnected. Your existing financial data is not deleted."}

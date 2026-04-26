@@ -2,12 +2,10 @@
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Depends
 from services.gmail_scanner import scan_gmail_for_statements
-from supabase import create_client
+from services.supabase_client import get_supabase
 import os
 
 router = APIRouter()
-
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
 
 def _get_user_id(request: Request) -> str:
@@ -26,8 +24,9 @@ async def trigger_scan(
     """Trigger a Gmail scan. Runs in background — poll /scan/status for progress."""
 
     # Check Gmail is connected
+    sb = get_supabase()
     token = (
-        supabase.table("gmail_tokens")
+        sb.table("gmail_tokens")
         .select("id")
         .eq("user_id", user_id)
         .eq("is_active", True)
@@ -38,7 +37,7 @@ async def trigger_scan(
 
     # Create scan job record
     job = (
-        supabase.table("scan_jobs")
+        sb.table("scan_jobs")
         .insert({"user_id": user_id, "triggered_by": "manual", "status": "running"})
         .execute()
     )
@@ -59,7 +58,7 @@ async def trigger_scan(
 async def scan_status(job_id: str, user_id: str = Depends(_get_user_id)):
     """Get the current status of a scan job."""
     job = (
-        supabase.table("scan_jobs")
+        get_supabase().table("scan_jobs")
         .select("*")
         .eq("id", job_id)
         .eq("user_id", user_id)
@@ -75,7 +74,7 @@ async def scan_status(job_id: str, user_id: str = Depends(_get_user_id)):
 async def scan_history(user_id: str = Depends(_get_user_id)):
     """Get all email statements found across all scans."""
     stmts = (
-        supabase.table("email_statements")
+        get_supabase().table("email_statements")
         .select("*")
         .eq("user_id", user_id)
         .order("created_at", desc=True)

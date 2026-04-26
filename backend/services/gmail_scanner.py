@@ -9,11 +9,9 @@ from datetime import datetime, timedelta
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from supabase import create_client
 
 from services.pdf_parser import parse_pdf_bytes
-
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
+from services.supabase_client import get_supabase
 
 
 # ── Statement detection config ────────────────────────────────
@@ -172,8 +170,9 @@ def detect_statement_type(sender: str, subject: str) -> tuple:
 
 def get_credentials(user_id: str) -> Credentials:
     """Fetch and decrypt Gmail tokens for a user."""
+    sb = get_supabase()
     token_row = (
-        supabase.table("gmail_tokens")
+        sb.table("gmail_tokens")
         .select("*")
         .eq("user_id", user_id)
         .eq("is_active", True)
@@ -187,12 +186,12 @@ def get_credentials(user_id: str) -> Credentials:
     secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
 
     access_token = (
-        supabase.rpc("decrypt_token", {"encrypted": token_row.data["access_token"], "secret": secret})
+        sb.rpc("decrypt_token", {"encrypted": token_row.data["access_token"], "secret": secret})
         .execute()
         .data
     )
     refresh_token = (
-        supabase.rpc("decrypt_token", {"encrypted": token_row.data["refresh_token"], "secret": secret})
+        sb.rpc("decrypt_token", {"encrypted": token_row.data["refresh_token"], "secret": secret})
         .execute()
         .data
     )
@@ -210,11 +209,11 @@ def get_credentials(user_id: str) -> Credentials:
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
         new_encrypted = (
-            supabase.rpc("encrypt_token", {"token": creds.token, "secret": secret})
+            sb.rpc("encrypt_token", {"token": creds.token, "secret": secret})
             .execute()
             .data
         )
-        supabase.table("gmail_tokens").update(
+        sb.table("gmail_tokens").update(
             {"access_token": new_encrypted, "token_expiry": creds.expiry.isoformat()}
         ).eq("user_id", user_id).execute()
 
@@ -243,6 +242,7 @@ def _find_pdf_parts(payload: dict) -> list:
 
 async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: int = 35) -> dict:
     """Find all financial statement emails and extract PDFs."""
+    sb = get_supabase()
 
     results = {
         "found": 0,
@@ -268,7 +268,7 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
             try:
                 # Skip duplicates
                 existing = (
-                    supabase.table("email_statements")
+                    sb.table("email_statements")
                     .select("id")
                     .eq("user_id", user_id)
                     .eq("gmail_message_id", msg["id"])
@@ -296,7 +296,7 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                 pdf_parts = _find_pdf_parts(full_msg["payload"])
 
                 if not pdf_parts:
-                    supabase.table("email_statements").insert(
+                    sb.table("email_statements").insert(
                         {
                             "user_id": user_id,
                             "gmail_message_id": msg["id"],
@@ -328,7 +328,7 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
 
                     # Record email statement
                     stmt_record = (
-                        supabase.table("email_statements")
+                        sb.table("email_statements")
                         .insert(
                             {
                                 "user_id": user_id,
@@ -350,7 +350,7 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
 
                     # Save to pdf_uploads (same table as manual uploads)
                     upload = (
-                        supabase.table("pdf_uploads")
+                        sb.table("pdf_uploads")
                         .insert(
                             {
                                 "user_id": user_id,
@@ -372,10 +372,10 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                         for tx in parse_result["transactions"]
                     ]
                     if txs:
-                        supabase.table("transactions").insert(txs).execute()
+                        sb.table("transactions").insert(txs).execute()
 
                     # Update email_statements with result
-                    supabase.table("email_statements").update(
+                    sb.table("email_statements").update(
                         {"processing_status": "parsed", "upload_id": upload_id}
                     ).eq("id", stmt_id).execute()
 
@@ -396,12 +396,12 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                 continue
 
         # Update last synced timestamp
-        supabase.table("gmail_tokens").update(
+        sb.table("gmail_tokens").update(
             {"last_synced_at": datetime.now().isoformat()}
         ).eq("user_id", user_id).execute()
 
         # Update scan job as completed
-        supabase.table("scan_jobs").update(
+        sb.table("scan_jobs").update(
             {
                 "status": "completed",
                 "emails_found": results["found"],
@@ -411,7 +411,7 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
         ).eq("id", scan_job_id).execute()
 
     except Exception as e:
-        supabase.table("scan_jobs").update(
+        sb.table("scan_jobs").update(
             {"status": "failed", "error_details": {"error": str(e)}}
         ).eq("id", scan_job_id).execute()
 
