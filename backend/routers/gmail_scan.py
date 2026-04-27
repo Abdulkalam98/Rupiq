@@ -148,6 +148,8 @@ async def debug_password(user_id: str = Depends(_get_user_id)):
             "has_password": True,
             "password_length": len(decrypted) if decrypted else 0,
             "password_preview": f"{decrypted[:2]}***{decrypted[-2:]}" if decrypted and len(decrypted) > 4 else "***",
+            "type": type(decrypted).__name__,
+            "repr": repr(decrypted)[:50],
         }
     except Exception as e:
         return {"has_password": False, "reason": f"Decryption failed: {str(e)}"}

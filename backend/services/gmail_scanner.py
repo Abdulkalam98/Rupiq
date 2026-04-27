@@ -257,13 +257,19 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
         )
         pdf_password = None
         if token_row.data and token_row.data[0].get("pdf_password"):
-            pdf_password = (
+            raw_password = (
                 sb.rpc("decrypt_token", {"encrypted": token_row.data[0]["pdf_password"], "secret": secret})
                 .execute()
                 .data
             )
+            # Strip null bytes (AES padding) and whitespace
+            if raw_password:
+                if isinstance(raw_password, str):
+                    pdf_password = raw_password.strip().rstrip('\x00')
+                else:
+                    pdf_password = str(raw_password).strip()
 
-        logger.info(f"PDF password configured: {bool(pdf_password)}, length: {len(pdf_password) if pdf_password else 0}")
+        logger.info(f"PDF password configured: {bool(pdf_password)}, length: {len(pdf_password) if pdf_password else 0}, repr: {repr(pdf_password)[:30] if pdf_password else 'None'}")
 
         query = build_gmail_query(days_back)
         messages_result = (
