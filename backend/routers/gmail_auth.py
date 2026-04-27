@@ -124,7 +124,8 @@ async def gmail_callback(request: Request, code: str, state: str, error: str = N
                 ),
                 "gmail_email": gmail_email,
                 "is_active": True,
-            }
+            },
+            on_conflict="user_id",
         ).execute()
     except Exception as e:
         logger.error(f"Gmail token storage failed: {e}")
