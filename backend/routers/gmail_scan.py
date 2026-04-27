@@ -98,3 +98,19 @@ async def internal_cron_scan(request: Request, background_tasks: BackgroundTasks
 
     background_tasks.add_task(scan_gmail_for_statements, user_id, job_id, days_back=35)
     return {"status": "scan_started"}
+
+
+# ── 5. Debug — latest scan error (temporary) ─────────────────
+@router.get("/scan/debug")
+async def scan_debug():
+    """Return the latest scan job with error details — no auth for quick debugging."""
+    job = (
+        get_supabase().table("scan_jobs")
+        .select("*")
+        .order("started_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not job.data:
+        return {"message": "No scan jobs found"}
+    return job.data[0]
