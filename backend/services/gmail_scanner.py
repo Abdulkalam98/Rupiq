@@ -4,6 +4,7 @@ import base64
 import io
 import os
 import re
+import traceback
 from datetime import datetime, timedelta
 
 from google.auth.transport.requests import Request
@@ -385,7 +386,8 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
 
             except Exception as e:
                 results["failed"] += 1
-                results.setdefault("errors", []).append(str(e)[:200])
+                err_detail = repr(e) or traceback.format_exc()
+                results.setdefault("errors", []).append(err_detail[:300])
                 continue
 
         # Update last synced timestamp
