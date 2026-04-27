@@ -3,6 +3,7 @@
 import base64
 import io
 import os
+import logging
 import re
 import traceback
 from datetime import datetime, timedelta
@@ -13,6 +14,8 @@ from googleapiclient.discovery import build
 
 from services.pdf_parser import parse_pdf_bytes
 from services.supabase_client import get_supabase
+
+logger = logging.getLogger(__name__)
 
 
 # ── Statement detection config ────────────────────────────────
@@ -243,7 +246,7 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
         creds = get_credentials(user_id)
         service = build("gmail", "v1", credentials=creds)
 
-        # Fetch user's saved PDF password (if any)
+        # Fetch user's saved PDF passwords (if any)
         secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
         token_row = (
             sb.table("gmail_tokens")
@@ -259,6 +262,8 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                 .execute()
                 .data
             )
+
+        logger.info(f"PDF password configured: {bool(pdf_password)}, length: {len(pdf_password) if pdf_password else 0}")
 
         query = build_gmail_query(days_back)
         messages_result = (

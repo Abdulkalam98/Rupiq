@@ -114,3 +114,40 @@ async def scan_debug():
     if not job.data:
         return {"message": "No scan jobs found"}
     return job.data[0]
+
+
+# ── 6. Debug — check password status ─────────────────────────
+@router.get("/scan/debug-password")
+async def debug_password(user_id: str = Depends(_get_user_id)):
+    """Check if PDF password is saved and can be decrypted."""
+    sb = get_supabase()
+    secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
+
+    token_row = (
+        sb.table("gmail_tokens")
+        .select("pdf_password")
+        .eq("user_id", user_id)
+        .eq("is_active", True)
+        .execute()
+    )
+
+    if not token_row.data:
+        return {"has_password": False, "reason": "No active gmail_tokens row"}
+
+    encrypted = token_row.data[0].get("pdf_password")
+    if not encrypted:
+        return {"has_password": False, "reason": "pdf_password column is NULL"}
+
+    try:
+        decrypted = (
+            sb.rpc("decrypt_token", {"encrypted": encrypted, "secret": secret})
+            .execute()
+            .data
+        )
+        return {
+            "has_password": True,
+            "password_length": len(decrypted) if decrypted else 0,
+            "password_preview": f"{decrypted[:2]}***{decrypted[-2:]}" if decrypted and len(decrypted) > 4 else "***",
+        }
+    except Exception as e:
+        return {"has_password": False, "reason": f"Decryption failed: {str(e)}"}

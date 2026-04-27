@@ -86,14 +86,16 @@ def detect_statement_type_from_pdf(parse_result: dict) -> str:
 
 # ── Core parser ───────────────────────────────────────────────
 
-def _extract_transactions(pdf_file, statement_type: str = None, password: str = None) -> dict:
+def _extract_transactions(pdf_file, statement_type: str = None, password: str = None, passwords: list = None) -> dict:
     """Shared extraction logic for both file paths and BytesIO objects."""
     transactions = []
     raw_text = ""
 
-    # Try with password, then without
+    # Build list of passwords to try
     passwords_to_try = []
-    if password:
+    if passwords:
+        passwords_to_try.extend(passwords)
+    if password and password not in passwords_to_try:
         passwords_to_try.append(password)
     passwords_to_try.append(None)  # try no password as fallback
 
@@ -159,11 +161,11 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
     }
 
 
-def parse_pdf_file(file_path: str, statement_type: str = None, password: str = None) -> dict:
+def parse_pdf_file(file_path: str, statement_type: str = None, password: str = None, passwords: list = None) -> dict:
     """Parse PDF from a file path — used for manual uploads."""
-    return _extract_transactions(file_path, statement_type, password)
+    return _extract_transactions(file_path, statement_type, password, passwords)
 
 
-def parse_pdf_bytes(pdf_bytes: io.BytesIO, statement_type: str = None, password: str = None) -> dict:
+def parse_pdf_bytes(pdf_bytes: io.BytesIO, statement_type: str = None, password: str = None, passwords: list = None) -> dict:
     """Parse PDF from in-memory bytes — used for Gmail auto-extracted PDFs."""
-    return _extract_transactions(pdf_bytes, statement_type, password)
+    return _extract_transactions(pdf_bytes, statement_type, password, passwords)
