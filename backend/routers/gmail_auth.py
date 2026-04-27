@@ -5,6 +5,11 @@ from services.supabase_client import get_supabase
 import os
 import logging
 
+# Railway terminates TLS at the proxy → app sees HTTP internally.
+# These tell oauthlib to accept HTTP redirect URIs and extra scopes.
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -67,12 +72,7 @@ async def gmail_callback(request: Request, code: str, state: str, error: str = N
     # Exchange auth code for tokens
     try:
         flow = _build_flow()
-        # Railway terminates TLS at the proxy, so request.url is http://
-        # but GMAIL_REDIRECT_URI is https://. Reconstruct with correct scheme.
-        callback_url = str(request.url)
-        if callback_url.startswith("http://") and os.getenv("GMAIL_REDIRECT_URI", "").startswith("https://"):
-            callback_url = "https://" + callback_url[len("http://"):]
-        flow.fetch_token(authorization_response=callback_url)
+        flow.fetch_token(code=code)
         credentials = flow.credentials
     except Exception as e:
         logger.error(f"Gmail token exchange failed: {e}")
