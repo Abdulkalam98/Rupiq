@@ -3,6 +3,9 @@ from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from services.supabase_client import get_supabase
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -50,18 +53,32 @@ async def gmail_connect(user_id: str = Depends(_get_user_id)):
 
 # ── 2. OAuth Callback ────────────────────────────────────────
 @router.get("/callback")
-async def gmail_callback(code: str, state: str, error: str = None):
+async def gmail_callback(request: Request, code: str, state: str, error: str = None):
     """Google redirects here after consent. Exchange code for tokens."""
+
+    frontend = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
     if error:
         # User denied access or something went wrong
-        frontend = os.getenv("FRONTEND_URL", "http://localhost:3000")
         return RedirectResponse(f"{frontend}/dashboard?gmail=denied")
 
     user_id = state
-    flow = _build_flow()
-    flow.fetch_token(code=code)
-    credentials = flow.credentials
+
+    # Exchange auth code for tokens
+    try:
+        flow = _build_flow()
+        # Railway terminates TLS at the proxy, so request.url is http://
+        # but GMAIL_REDIRECT_URI is https://. Reconstruct with correct scheme.
+        callback_url = str(request.url)
+        if callback_url.startswith("http://") and os.getenv("GMAIL_REDIRECT_URI", "").startswith("https://"):
+            callback_url = "https://" + callback_url[len("http://"):]
+        flow.fetch_token(authorization_response=callback_url)
+        credentials = flow.credentials
+    except Exception as e:
+        logger.error(f"Gmail token exchange failed: {e}")
+        redirect_uri = os.getenv("GMAIL_REDIRECT_URI")
+        logger.error(f"GMAIL_REDIRECT_URI={redirect_uri}, callback URL={request.url}")
+        return RedirectResponse(f"{frontend}/dashboard?gmail=error&reason=token_exchange")
 
     # Hard-check: scope MUST be readonly
     granted = set(credentials.scopes or [])
@@ -70,45 +87,48 @@ async def gmail_callback(code: str, state: str, error: str = None):
 
     encryption_secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
 
-    # Encrypt both tokens before persisting
-    sb = get_supabase()
-    enc_access = (
-        sb.rpc(
-            "encrypt_token",
-            {"token": credentials.token, "secret": encryption_secret},
+    try:
+        # Encrypt both tokens before persisting
+        sb = get_supabase()
+        enc_access = (
+            sb.rpc(
+                "encrypt_token",
+                {"token": credentials.token, "secret": encryption_secret},
+            )
+            .execute()
+            .data
         )
-        .execute()
-        .data
-    )
-    enc_refresh = (
-        sb.rpc(
-            "encrypt_token",
-            {"token": credentials.refresh_token, "secret": encryption_secret},
+        enc_refresh = (
+            sb.rpc(
+                "encrypt_token",
+                {"token": credentials.refresh_token, "secret": encryption_secret},
+            )
+            .execute()
+            .data
         )
-        .execute()
-        .data
-    )
 
-    # Fetch the Gmail address from the id_token (or userinfo)
-    gmail_email = None
-    if credentials.id_token and isinstance(credentials.id_token, dict):
-        gmail_email = credentials.id_token.get("email")
+        # Fetch the Gmail address from the id_token (or userinfo)
+        gmail_email = None
+        if credentials.id_token and isinstance(credentials.id_token, dict):
+            gmail_email = credentials.id_token.get("email")
 
-    # Upsert — allows user to reconnect Gmail
-    sb.table("gmail_tokens").upsert(
-        {
-            "user_id": user_id,
-            "access_token": enc_access,
-            "refresh_token": enc_refresh,
-            "token_expiry": (
-                credentials.expiry.isoformat() if credentials.expiry else None
-            ),
-            "gmail_email": gmail_email,
-            "is_active": True,
-        }
-    ).execute()
+        # Upsert — allows user to reconnect Gmail
+        sb.table("gmail_tokens").upsert(
+            {
+                "user_id": user_id,
+                "access_token": enc_access,
+                "refresh_token": enc_refresh,
+                "token_expiry": (
+                    credentials.expiry.isoformat() if credentials.expiry else None
+                ),
+                "gmail_email": gmail_email,
+                "is_active": True,
+            }
+        ).execute()
+    except Exception as e:
+        logger.error(f"Gmail token storage failed: {e}")
+        return RedirectResponse(f"{frontend}/dashboard?gmail=error&reason=storage")
 
-    frontend = os.getenv("FRONTEND_URL", "http://localhost:3000")
     return RedirectResponse(
         f"{frontend}/dashboard?gmail=connected&scan=starting"
     )
