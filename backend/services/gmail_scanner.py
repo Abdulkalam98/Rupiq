@@ -124,22 +124,28 @@ def build_gmail_query(days_back: int = 35) -> str:
     """Build Gmail search query covering all statement types from last N days."""
     since_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
 
-    all_senders = []
-    for pattern in STATEMENT_PATTERNS.values():
-        all_senders.extend(pattern["senders"])
-
-    sender_query = " OR ".join([f"from:{s}" for s in all_senders])
-
     subject_queries = [
         "subject:(account statement)",
+        "subject:(e-statement)",
+        "subject:(bank statement)",
+        "subject:(monthly statement)",
         "subject:(credit card statement)",
+        "subject:(card statement)",
+        "subject:(payment due)",
+        "subject:(outstanding amount)",
         "subject:(demat statement)",
+        "subject:(holding statement)",
+        "subject:(portfolio statement)",
+        "subject:(credit score)",
         "subject:(credit report)",
         "subject:(CIBIL)",
+        "subject:(transaction alert)",
+        "subject:(statement ready)",
+        "subject:(your statement)",
     ]
     subject_query = " OR ".join(subject_queries)
 
-    return f"has:attachment filename:pdf ({sender_query} OR {subject_query}) after:{since_date}"
+    return f"has:attachment filename:pdf ({subject_query}) after:{since_date}"
 
 
 # ── Statement type + institution detection ────────────────────
