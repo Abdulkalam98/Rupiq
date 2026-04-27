@@ -86,12 +86,38 @@ def detect_statement_type_from_pdf(parse_result: dict) -> str:
 
 # ── Core parser ───────────────────────────────────────────────
 
-def _extract_transactions(pdf_file, statement_type: str = None) -> dict:
+def _extract_transactions(pdf_file, statement_type: str = None, password: str = None) -> dict:
     """Shared extraction logic for both file paths and BytesIO objects."""
     transactions = []
     raw_text = ""
 
-    with pdfplumber.open(pdf_file) as pdf:
+    # Try with password, then without
+    passwords_to_try = []
+    if password:
+        passwords_to_try.append(password)
+    passwords_to_try.append(None)  # try no password as fallback
+
+    pdf = None
+    for pw in passwords_to_try:
+        try:
+            pdf = pdfplumber.open(pdf_file, password=pw)
+            # Test that we can actually read a page
+            if pdf.pages:
+                pdf.pages[0].extract_text()
+            break
+        except Exception:
+            if pdf:
+                pdf.close()
+            pdf = None
+            # Reset BytesIO position for retry
+            if hasattr(pdf_file, "seek"):
+                pdf_file.seek(0)
+            continue
+
+    if pdf is None:
+        raise ValueError("Could not open PDF — it may be password-protected. Please provide the correct password.")
+
+    with pdf:
         for page in pdf.pages:
             raw_text += page.extract_text() or ""
             tables = page.extract_tables()
@@ -133,11 +159,11 @@ def _extract_transactions(pdf_file, statement_type: str = None) -> dict:
     }
 
 
-def parse_pdf_file(file_path: str, statement_type: str = None) -> dict:
+def parse_pdf_file(file_path: str, statement_type: str = None, password: str = None) -> dict:
     """Parse PDF from a file path — used for manual uploads."""
-    return _extract_transactions(file_path, statement_type)
+    return _extract_transactions(file_path, statement_type, password)
 
 
-def parse_pdf_bytes(pdf_bytes: io.BytesIO, statement_type: str = None) -> dict:
+def parse_pdf_bytes(pdf_bytes: io.BytesIO, statement_type: str = None, password: str = None) -> dict:
     """Parse PDF from in-memory bytes — used for Gmail auto-extracted PDFs."""
-    return _extract_transactions(pdf_bytes, statement_type)
+    return _extract_transactions(pdf_bytes, statement_type, password)

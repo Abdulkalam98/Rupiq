@@ -65,7 +65,7 @@ async def upload_pdf(
         import io
 
         pdf_bytes = io.BytesIO(contents)
-        parse_result = parse_pdf_bytes(pdf_bytes)
+        parse_result = parse_pdf_bytes(pdf_bytes, password=password)
 
         # Detect statement type from content
         stmt_type = detect_statement_type_from_pdf(parse_result)

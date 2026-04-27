@@ -243,6 +243,23 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
         creds = get_credentials(user_id)
         service = build("gmail", "v1", credentials=creds)
 
+        # Fetch user's saved PDF password (if any)
+        secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
+        token_row = (
+            sb.table("gmail_tokens")
+            .select("pdf_password")
+            .eq("user_id", user_id)
+            .eq("is_active", True)
+            .execute()
+        )
+        pdf_password = None
+        if token_row.data and token_row.data[0].get("pdf_password"):
+            pdf_password = (
+                sb.rpc("decrypt_token", {"encrypted": token_row.data[0]["pdf_password"], "secret": secret})
+                .execute()
+                .data
+            )
+
         query = build_gmail_query(days_back)
         messages_result = (
             service.users().messages().list(userId="me", q=query, maxResults=50).execute()
@@ -339,7 +356,7 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                     stmt_id = stmt_record.data[0]["id"]
 
                     # Parse PDF bytes directly
-                    parse_result = parse_pdf_bytes(pdf_bytes, statement_type=stmt_type)
+                    parse_result = parse_pdf_bytes(pdf_bytes, statement_type=stmt_type, password=pdf_password)
 
                     # Save to pdf_uploads (same table as manual uploads)
                     upload = (

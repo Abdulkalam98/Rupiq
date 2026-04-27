@@ -168,3 +168,28 @@ async def gmail_disconnect(user_id: str = Depends(_get_user_id)):
         "user_id", user_id
     ).execute()
     return {"message": "Gmail disconnected. Your existing financial data is not deleted."}
+
+
+# ── 5. Save PDF password for statement decryption ─────────────
+@router.post("/pdf-password")
+async def set_pdf_password(request: Request, user_id: str = Depends(_get_user_id)):
+    """Save an encrypted PDF password for auto-scanning password-protected statements."""
+    body = await request.json()
+    password = body.get("password", "")
+    if not password:
+        raise HTTPException(400, "Password is required")
+
+    sb = get_supabase()
+    encryption_secret = os.getenv("TOKEN_ENCRYPTION_SECRET")
+
+    enc_password = (
+        sb.rpc("encrypt_token", {"token": password, "secret": encryption_secret})
+        .execute()
+        .data
+    )
+
+    sb.table("gmail_tokens").update(
+        {"pdf_password": enc_password}
+    ).eq("user_id", user_id).eq("is_active", True).execute()
+
+    return {"message": "PDF password saved securely."}
