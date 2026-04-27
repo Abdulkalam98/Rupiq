@@ -3,6 +3,7 @@
 import io
 import re
 import pdfplumber
+import pikepdf
 
 
 # ── Transaction categorization ────────────────────────────────
@@ -99,11 +100,11 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
         passwords_to_try.append(password)
     passwords_to_try.append(None)  # try no password as fallback
 
+    # First try pdfplumber directly (works for unencrypted + RC4 encrypted)
     pdf = None
     for pw in passwords_to_try:
         try:
             pdf = pdfplumber.open(pdf_file, password=pw)
-            # Test that we can actually read a page
             if pdf.pages:
                 pdf.pages[0].extract_text()
             break
@@ -111,10 +112,34 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
             if pdf:
                 pdf.close()
             pdf = None
-            # Reset BytesIO position for retry
             if hasattr(pdf_file, "seek"):
                 pdf_file.seek(0)
             continue
+
+    # If pdfplumber failed, use pikepdf to decrypt AES-encrypted PDFs
+    if pdf is None:
+        if hasattr(pdf_file, "seek"):
+            pdf_file.seek(0)
+        for pw in passwords_to_try:
+            if pw is None:
+                continue
+            try:
+                pike = pikepdf.open(pdf_file, password=pw)
+                decrypted_bytes = io.BytesIO()
+                pike.save(decrypted_bytes)
+                pike.close()
+                decrypted_bytes.seek(0)
+                pdf = pdfplumber.open(decrypted_bytes)
+                if pdf.pages:
+                    pdf.pages[0].extract_text()
+                break
+            except Exception:
+                if pdf:
+                    pdf.close()
+                pdf = None
+                if hasattr(pdf_file, "seek"):
+                    pdf_file.seek(0)
+                continue
 
     if pdf is None:
         raise ValueError("Could not open PDF — it may be password-protected. Please provide the correct password.")
