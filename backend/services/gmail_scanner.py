@@ -377,8 +377,9 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                     # PDF bytes garbage-collected here
                     del pdf_data, pdf_bytes
 
-            except Exception:
+            except Exception as e:
                 results["failed"] += 1
+                results.setdefault("errors", []).append(str(e)[:200])
                 continue
 
         # Update last synced timestamp
@@ -393,6 +394,11 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                 "emails_found": results["found"],
                 "pdfs_extracted": results["extracted"],
                 "completed_at": datetime.now().isoformat(),
+                "error_details": {
+                    "failed": results["failed"],
+                    "skipped_duplicates": results["skipped_duplicates"],
+                    "errors": results.get("errors", [])[:5],
+                },
             }
         ).eq("id", scan_job_id).execute()
 
