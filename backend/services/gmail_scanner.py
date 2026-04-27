@@ -13,6 +13,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from services.pdf_parser import parse_pdf_bytes
+from services.ai_analyser import analyse_statements
 from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -437,6 +438,30 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
                 },
             }
         ).eq("id", scan_job_id).execute()
+
+        # Auto-trigger AI analysis on all successfully parsed uploads
+        upload_ids = [s["upload_id"] for s in results["statements"]]
+        if not upload_ids:
+            # Also pick up any previously parsed but unanalysed uploads
+            unanalysed = (
+                sb.table("pdf_uploads")
+                .select("id")
+                .eq("user_id", user_id)
+                .eq("source", "gmail_auto")
+                .eq("status", "parsed")
+                .execute()
+            )
+            upload_ids = [u["id"] for u in (unanalysed.data or [])]
+
+        if upload_ids:
+            try:
+                logger.info(f"Auto-triggering analysis on {len(upload_ids)} uploads")
+                await analyse_statements(user_id, upload_ids)
+                sb.table("scan_jobs").update(
+                    {"statements_analysed": len(upload_ids)}
+                ).eq("id", scan_job_id).execute()
+            except Exception as e:
+                logger.error(f"Auto-analysis failed: {e}")
 
     except Exception as e:
         sb.table("scan_jobs").update(
