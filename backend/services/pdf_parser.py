@@ -1,9 +1,12 @@
 """PDF parser — extracts transactions from bank/CC/demat/CIBIL statement PDFs."""
 
 import io
+import logging
 import re
 import pdfplumber
 import pikepdf
+
+logger = logging.getLogger(__name__)
 
 
 # ── Transaction categorization ────────────────────────────────
@@ -107,8 +110,10 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
             pdf = pdfplumber.open(pdf_file, password=pw)
             if pdf.pages:
                 pdf.pages[0].extract_text()
+            logger.info(f"pdfplumber opened OK with password={'***' if pw else 'None'}")
             break
-        except Exception:
+        except Exception as e:
+            logger.info(f"pdfplumber failed with password={'***' if pw else 'None'}: {repr(e)[:100]}")
             if pdf:
                 pdf.close()
             pdf = None
@@ -118,6 +123,7 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
 
     # If pdfplumber failed, use pikepdf to decrypt AES-encrypted PDFs
     if pdf is None:
+        logger.info("pdfplumber failed all passwords, trying pikepdf...")
         if hasattr(pdf_file, "seek"):
             pdf_file.seek(0)
         for pw in passwords_to_try:
@@ -132,8 +138,10 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
                 pdf = pdfplumber.open(decrypted_bytes)
                 if pdf.pages:
                     pdf.pages[0].extract_text()
+                logger.info(f"pikepdf decrypted OK with password='***'")
                 break
-            except Exception:
+            except Exception as e:
+                logger.info(f"pikepdf failed with password='***': {repr(e)[:100]}")
                 if pdf:
                     pdf.close()
                 pdf = None
@@ -142,7 +150,7 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
                 continue
 
     if pdf is None:
-        raise ValueError("Could not open PDF — it may be password-protected. Please provide the correct password.")
+        raise ValueError("Could not open PDF — tried pdfplumber and pikepdf with all passwords. Check Railway logs for details.")
 
     with pdf:
         for page in pdf.pages:
