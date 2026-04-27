@@ -35,32 +35,32 @@ async def upload_pdf(
         raise HTTPException(400, "File too large — max 10MB")
 
     sb = get_supabase()
-
-    # Upload to Supabase Storage
     file_id = str(uuid.uuid4())
     storage_path = f"{user_id}/{file_id}_{file.filename}"
-
-    sb.storage.from_("statements").upload(
-        storage_path, contents, {"content-type": "application/pdf"}
-    )
-
-    # Create upload record
-    upload = (
-        sb.table("pdf_uploads")
-        .insert(
-            {
-                "user_id": user_id,
-                "filename": file.filename,
-                "storage_path": storage_path,
-                "source": "manual_upload",
-                "status": "parsing",
-            }
-        )
-        .execute()
-    )
-    upload_id = upload.data[0]["id"]
+    upload_id = None
 
     try:
+        # Upload to Supabase Storage
+        sb.storage.from_("statements").upload(
+            storage_path, contents, {"content-type": "application/pdf"}
+        )
+
+        # Create upload record
+        upload = (
+            sb.table("pdf_uploads")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "filename": file.filename,
+                    "storage_path": storage_path,
+                    "source": "manual_upload",
+                    "status": "parsing",
+                }
+            )
+            .execute()
+        )
+        upload_id = upload.data[0]["id"]
+
         # Parse PDF from bytes
         import io
 
@@ -99,14 +99,18 @@ async def upload_pdf(
         }
 
     except Exception as e:
-        sb.table("pdf_uploads").update(
-            {"status": "failed", "error_message": str(e)}
-        ).eq("id", upload_id).execute()
+        if upload_id:
+            sb.table("pdf_uploads").update(
+                {"status": "failed", "error_message": str(e)}
+            ).eq("id", upload_id).execute()
 
-        # Clean up storage on failure too
-        sb.storage.from_("statements").remove([storage_path])
+        # Clean up storage
+        try:
+            sb.storage.from_("statements").remove([storage_path])
+        except Exception:
+            pass
 
-        raise HTTPException(500, f"Failed to parse PDF: {str(e)}")
+        raise HTTPException(500, f"Failed to process PDF: {str(e)}")
 
 
 @router.get("/history")
