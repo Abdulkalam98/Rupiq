@@ -1,6 +1,7 @@
 """Analysis API — trigger AI analysis and fetch results."""
 
 import os
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 from services.ai_analyser import analyse_statements
 from services.supabase_client import get_supabase
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -33,24 +35,32 @@ async def trigger_analysis(
     if not body.upload_ids:
         raise HTTPException(400, "At least one upload_id is required")
 
-    # Verify uploads belong to this user
-    for uid in body.upload_ids:
-        check = (
-            get_supabase().table("pdf_uploads")
-            .select("id")
-            .eq("id", uid)
-            .eq("user_id", user_id)
-            .execute()
-        )
-        if not check.data:
-            raise HTTPException(404, f"Upload {uid} not found or not yours")
+    try:
+        # Verify uploads belong to this user
+        for uid in body.upload_ids:
+            check = (
+                get_supabase().table("pdf_uploads")
+                .select("id")
+                .eq("id", uid)
+                .eq("user_id", user_id)
+                .execute()
+            )
+            if not check.data:
+                raise HTTPException(404, f"Upload {uid} not found or not yours")
 
-    result = await analyse_statements(user_id, body.upload_ids)
+        logger.info(f"Starting analysis for user={user_id}, uploads={body.upload_ids}")
+        result = await analyse_statements(user_id, body.upload_ids)
 
-    if "error" in result:
-        raise HTTPException(500, result["error"])
+        if "error" in result:
+            raise HTTPException(500, result["error"])
 
-    return result
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        raise HTTPException(500, f"Analysis failed: {str(e)}")
 
 
 # ── 2. Get latest analysis ────────────────────────────────────
