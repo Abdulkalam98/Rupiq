@@ -2,12 +2,14 @@
 
 import os
 import uuid
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 
 from services.pdf_parser import parse_pdf_file, parse_pdf_bytes, detect_statement_type_from_pdf
 from services.supabase_client import get_supabase
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -20,8 +22,9 @@ def _get_user_id(request: Request) -> str:
 
 @router.post("/pdf")
 async def upload_pdf(
+    request: Request,
     file: UploadFile = File(...),
-    password: str = Form(default=None),
+    password: str = Form(default=""),
     user_id: str = Depends(_get_user_id),
 ):
     """Upload a bank/CC/demat/CIBIL statement PDF for parsing."""
@@ -41,9 +44,11 @@ async def upload_pdf(
 
     try:
         # Upload to Supabase Storage
+        logger.info(f"Uploading to storage: {storage_path} ({len(contents)} bytes)")
         sb.storage.from_("statements").upload(
             storage_path, contents, {"content-type": "application/pdf"}
         )
+        logger.info("Storage upload done")
 
         # Create upload record
         upload = (
@@ -60,12 +65,14 @@ async def upload_pdf(
             .execute()
         )
         upload_id = upload.data[0]["id"]
+        logger.info(f"DB record created: {upload_id}")
 
         # Parse PDF from bytes
         import io
 
         pdf_bytes = io.BytesIO(contents)
-        parse_result = parse_pdf_bytes(pdf_bytes, password=password)
+        parse_result = parse_pdf_bytes(pdf_bytes, password=password or None)
+        logger.info(f"PDF parsed: {parse_result['transaction_count']} transactions")
 
         # Detect statement type from content
         stmt_type = detect_statement_type_from_pdf(parse_result)
@@ -125,3 +132,15 @@ async def upload_history(user_id: str = Depends(_get_user_id)):
         .execute()
     )
     return {"uploads": uploads.data}
+
+
+@router.post("/test")
+async def test_upload(file: UploadFile = File(...)):
+    """Debug endpoint — test upload without auth or DB."""
+    contents = await file.read()
+    return {
+        "filename": file.filename,
+        "size": len(contents),
+        "content_type": file.content_type,
+        "status": "received_ok",
+    }
