@@ -252,17 +252,23 @@ async def scan_gmail_for_statements(user_id: str, scan_job_id: str, days_back: i
 
         for msg in messages:
             try:
-                # Skip duplicates
+                # Skip only successfully processed duplicates
                 existing = (
                     sb.table("email_statements")
-                    .select("id")
+                    .select("id, processing_status")
                     .eq("user_id", user_id)
                     .eq("gmail_message_id", msg["id"])
                     .execute()
                 )
                 if existing.data:
-                    results["skipped_duplicates"] += 1
-                    continue
+                    status = existing.data[0]["processing_status"]
+                    if status in ("parsed", "analysed"):
+                        results["skipped_duplicates"] += 1
+                        continue
+                    # Delete old failed/skipped records so we can retry
+                    sb.table("email_statements").delete().eq(
+                        "id", existing.data[0]["id"]
+                    ).execute()
 
                 # Fetch full message
                 full_msg = (
