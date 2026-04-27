@@ -94,6 +94,7 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
     """Shared extraction logic for both file paths and BytesIO objects."""
     transactions = []
     raw_text = ""
+    errors_log = []
 
     # Build list of passwords to try
     passwords_to_try = []
@@ -110,10 +111,9 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
             pdf = pdfplumber.open(pdf_file, password=pw)
             if pdf.pages:
                 pdf.pages[0].extract_text()
-            logger.info(f"pdfplumber opened OK with password={'***' if pw else 'None'}")
             break
         except Exception as e:
-            logger.info(f"pdfplumber failed with password={'***' if pw else 'None'}: {repr(e)[:100]}")
+            errors_log.append(f"pdfplumber[pw={'yes' if pw else 'no'}]: {repr(e)[:120]}")
             if pdf:
                 pdf.close()
             pdf = None
@@ -123,7 +123,6 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
 
     # If pdfplumber failed, use pikepdf to decrypt AES-encrypted PDFs
     if pdf is None:
-        logger.info("pdfplumber failed all passwords, trying pikepdf...")
         if hasattr(pdf_file, "seek"):
             pdf_file.seek(0)
         for pw in passwords_to_try:
@@ -138,10 +137,9 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
                 pdf = pdfplumber.open(decrypted_bytes)
                 if pdf.pages:
                     pdf.pages[0].extract_text()
-                logger.info(f"pikepdf decrypted OK with password='***'")
                 break
             except Exception as e:
-                logger.info(f"pikepdf failed with password='***': {repr(e)[:100]}")
+                errors_log.append(f"pikepdf[pw={'yes' if pw else 'no'}]: {repr(e)[:120]}")
                 if pdf:
                     pdf.close()
                 pdf = None
@@ -150,7 +148,8 @@ def _extract_transactions(pdf_file, statement_type: str = None, password: str = 
                 continue
 
     if pdf is None:
-        raise ValueError("Could not open PDF — tried pdfplumber and pikepdf with all passwords. Check Railway logs for details.")
+        detail = " | ".join(errors_log) if errors_log else "no errors captured"
+        raise ValueError(f"PDF decrypt failed: {detail}")
 
     with pdf:
         for page in pdf.pages:
