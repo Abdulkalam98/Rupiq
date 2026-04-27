@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from services.supabase_client import get_supabase
+from urllib.parse import quote
 import os
 import logging
 
@@ -127,7 +128,7 @@ async def gmail_callback(request: Request, code: str, state: str, error: str = N
         ).execute()
     except Exception as e:
         logger.error(f"Gmail token storage failed: {e}")
-        return RedirectResponse(f"{frontend}/dashboard?gmail=error&reason=storage")
+        return RedirectResponse(f"{frontend}/dashboard?gmail=error&reason=storage&detail={quote(str(e))}")
 
     return RedirectResponse(
         f"{frontend}/dashboard?gmail=connected&scan=starting"
